@@ -1,0 +1,111 @@
+#!/usr/bin/bash/env python
+from flask import Flask, render_template, Markup
+from flask import request
+from flask.helpers import send_file
+from keystoneauth1 import identity
+from keystoneauth1 import session
+from neutronclient.v2_0 import client
+import novaclient.client as nvclient
+import subprocess
+
+app = Flask(__name__)
+
+#Function for index page
+@app.route('/')
+def startPage():
+    bodyText=Markup("<b>Web Infrastructure</b>")
+    return render_template('index.html', bodyText=bodyText)
+
+#Function to add new networks and routers
+@app.route('/form1')
+def form1():
+    return render_template("form1.html")
+
+#Function to add new instances
+@app.route('/form2')
+def form2():
+    return render_template("form2.html")
+
+#Function to take inputs for new networks
+@app.route('/NetworkInput', methods=['POST'])
+def NetworkInput():
+    ProjectName=str(request.form['ProjectName'])
+    Username=str(request.form['Username'])
+    Password=str(request.form['Password'])
+    RouterName=str(request.form['RouterName'])
+    NetworkName=str(request.form['NetworkName'])
+    SubnetName=str(request.form['SubnetName'])
+    CIDR=str(request.form['CIDR'])
+    NetworkStart=str(request.form['NetworkStart'])
+    NetworkEnd=str(request.form['NetworkEnd'])
+    auth_url='http://172.16.55.5/identity'
+    auth = identity.Password(auth_url=auth_url, username=Username, password=Password, project_name=ProjectName, project_domain_id='default', user_domain_id='default')
+    sessionCreate = session.Session(auth=auth)
+    neutron = client.Client(session=sessionCreate)
+    neutron.format = 'json'
+
+    request1 = {'router': {'name': RouterName, 'admin_state_up': True}}
+    router = neutron.create_router(request1)
+    router_id = router['router']['id']
+    router = neutron.show_router(router_id)
+    networks = neutron.list_networks(name='public')
+    network_id = networks['networks'][0]['id']
+    router_dict = {'network_id': network_id}
+    neutron.add_gateway_router(router_id, router_dict)
+
+    network = {'name': NetworkName, 'admin_state_up': True}
+    neutron.create_network({'network':network})
+    networks = neutron.list_networks(name=NetworkName)
+    network_id = networks['networks'][0]['id']
+
+    subnet = {'name': SubnetName, 'ip_version': '4', 'cidr': CIDR, 'network_id': network_id, "allocation_pools": [{"start": NetworkStart, "end": NetworkEnd}]}
+    neutron.create_subnet({'subnet':subnet})
+    subnets = neutron.list_subnets(name=SubnetName)
+    subnet_id = subnets['subnets'][0]['id']
+    router_interface = {'subnet_id': subnet_id}
+    neutron.add_interface_router(router_id, router_interface) 
+
+    return "Network/Router configuration is complete"
+
+#Function to take inputs for new instances
+@app.route('/InstanceInput', methods=['POST'])
+def InstanceInput():
+    FlavorName=str(request.form['FlavorName'])
+    ImageName=str(request.form['ImageName'])
+    NICName=str(request.form['NICName'])
+    InstanceName=str(request.form['InstanceName'])
+
+    response=subprocess.check_output(["nova","boot","--flavor",FlavorName,"--image",ImageName,"--min-count","1","--nic","net-id="+NICName,InstanceName],stderr=subprocess.STDOUT,universal_newlines=True)
+    print(response)
+
+    response=subprocess.check_output(["nova","list"],stderr=subprocess.STDOUT,universal_newlines=True)
+    print(response)
+    count=0
+    for line in response.split("|"):
+        if(InstanceName in line):
+            instanceID=response.split("|")[count-1].strip(" ")
+            print(InstanceName+": ", instanceID)
+        else:
+            count+=1
+
+    response=subprocess.check_output(["openstack","floating","ip","create","public"],stderr=subprocess.STDOUT,universal_newlines=True)
+    print(response)
+
+    count=0
+    for line in response.split("|"):
+        if("floating_ip_address" in line):
+            floatingIP=response.split("|")[count+1].strip(" ")
+        else:
+            count+=1
+
+    response=subprocess.check_output(["openstack","server","add","floating","ip",instanceID,floatingIP],stderr=subprocess.STDOUT,universal_newlines=True)
+    print(response)
+
+    response=subprocess.check_output(["openstack","ip","floating","create","public"],stderr=subprocess.STDOUT,universal_newlines=True)
+    print(response)
+
+    return "Instance configuration is complete"
+
+if __name__ == '__main__':
+    app.debug = True
+    app.run(host='172.16.55.5', port=8888)
