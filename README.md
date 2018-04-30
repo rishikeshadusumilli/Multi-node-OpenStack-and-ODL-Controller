@@ -23,7 +23,7 @@ BGP peering - Steps
 4.	Installed Quagga and configured BGP to form neighbor relationship between ODL and instances.
 5.	Ensured successful BGP peering session establishment between ODL and the instances.
 
-Steps:
+Running Steps:
 
 1.	Run the finalProject.py program to start the Python Flask module.
 2.	In a web browser, navigate to the OpenStack controller's IP address (172.16.55.5:8888).
